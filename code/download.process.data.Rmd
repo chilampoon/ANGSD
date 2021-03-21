@@ -1,0 +1,224 @@
+---
+title: "Downloading and Processing Data"
+author: "Chi Lam Poon"
+date: "2/15/2021"
+output:
+  html_document:
+    toc: true
+---
+
+## Introduction
+The topic of my project is __Sex differences of normal human putamen tissues on the transcriptomic level__. Based on this publication [Diurnal rhythms across the human dorsal and ventral striatum](https://www.pnas.org/content/118/2/e2016150118), the brain tissue sampels can be found on GEO [GSE160521](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE160521) with sra [table](https://www.ncbi.nlm.nih.gov/Traces/study/?acc=PRJNA673437&o=acc_s%3Aa).
+
+Brain tissue samples were obtained through the University of Pittsburgh Brain Tissue Donation Program and the NIH NeuroBioBank, the lab at UPitt generated the data.
+
+Total RNA was extracted from the tissue samples using a combination of Trizol (Invitrogen, Carlsbad, CA) and RNeasy Lipid Tissue Mini Kit (Qiagen, Hilden, Germany). RNA quantity and quality were assessed using fluorometry (Qubit RNA Broad Range Assay Kit and Fluorometer; Invitrogen, Carlsbad, CA) and chromatography (Bioanalyzer and RNA 6000 Nano Kit; Agilent, Santa Clara, CA), respectively. 
+
+Libraries were prepped for RNA-sequencing using the TruSeq Stranded Total RNA Sample Preparation Kit (Illumina, San Diego, CA). 75bp paired-end dual-indexed sequencing was performed using the NextSeq 500 platform (Illumina, San Diego, CA). 
+
+Cell types should be neurons and some others around putamen.
+
+These are all brain tissues without psychiatric conditions, the variable I want to compare is gender.
+
+
+## Getting data
+I first selected 6 male & 6 female putamen samples and downloaded the `SraRunTable`.
+```{r read}
+runTable <- read.delim("/home/zhp4001/proj.angsd/data/SraRunTable.txt", sep = ",")
+runTable
+```
+
+Then download samples using sratoolkit:
+```bash
+cd /home/zhp4001/proj.angsd/data
+DIR=/athena/angsd/scratch/zhp4001/sra/sra # in the default sratoolkit directory I set
+SRR=$(cat SraRunTable.txt | cut -d, -f1 | sed '1d')
+for s in $SRR; do
+prefetch $s
+fasterq-dump --split-files $DIR/$s.sra -O /athena/angsd/scratch/zhp4001/data
+done
+
+cd /athena/angsd/scratch/zhp4001/data
+ls
+```
+
+## Alignment
+
+I'll just use one sample (SRR12953537 including `SRR12953537_1.fastq.gz` & `SRR12953537_2.fastq.gz`) here. 
+
+### QC
+```bash
+spack load fastqc
+fastqc SRR12953537_1.fastq.gz SRR12953537_2.fastq.gz
+# forgot to create a directory
+mkdir -p fastqc/SRR12953537
+mv *fastqc.* fastqc/SRR12953537
+```
+
+The Sequences flagged as poor quality of both fqs are 0, and from the qc reports seems like the reads are of high quality. Let's try trimgalore then compare with the reports after trimming.
+
+```bash
+spack load -r trimgalore
+trim_galore --illumina --stringency 5 -e 0.15 --fastqc --paired SRR12953537_1.fastq.gz SRR12953537_2.fastq.gz
+#fastqc SRR12953537_1_trimmed.fq.gz SRR12953537_2_trimmed.fq.gz
+```
+
+Looks like I __don't__ need to trim the adapters since values in the `Adapter Content` plot are all ~0. 
+
+And fastqc report after trimming looks similar. There is a peak in this `Per sequence GC content` plot in both untrimmed & trimmed fqs:
+
+![peak](/athena/angsd/scratch/zhp4001/data/fastqc/peak.png)
+
+This is probably caused by the highly repeated reads:
+![repeats](/athena/angsd/scratch/zhp4001/data/fastqc/repeats.png)
+
+I tried to use BLAT in UCSC genome browser to see the locations of the first five reads and got:
+
+```
+r1       75     1    75    75   100.0%  chr9                  -     9442160   9442234     75
+r1       75     1    75    75   100.0%  chr3                  -    15738615  15738689     75
+r1       75     1    75    75   100.0%  chr14                 -    49586680  49586754     75
+r1       75     1    75    75   100.0%  chr14                 +    49862675  49862749     75
+=========
+r2       75     1    75    75   100.0%  chr9                  -     9442165   9442239     75
+r2       75     1    75    75   100.0%  chr3                  -    15738620  15738694     75
+r2       75     1    75    75   100.0%  chr14                 -    49586685  49586759     75
+r2       75     1    75    75   100.0%  chr14                 +    49862670  49862744     75
+=========
+r3       75     1    75    75   100.0%  chr9                  -     9442164   9442238     75
+r3       75     1    75    75   100.0%  chr3                  -    15738619  15738693     75
+r3       75     1    75    75   100.0%  chr14                 -    49586684  49586758     75
+r3       75     1    75    75   100.0%  chr14                 +    49862671  49862745     75
+
+========
+r4       75     1    75    75   100.0%  chr9                  -     9442191   9442265     75
+r4       75     1    75    75   100.0%  chr14                 -    49586711  49586785     75
+r4       75     1    75    75   100.0%  chr14                 +    49853709  49853783     75
+r4       75     1    75    75   100.0%  chr14                 +    49862644  49862718     75
+========
+r5       75     1    75    75   100.0%  chr9                  -     9442163   9442237     75
+r5       75     1    75    75   100.0%  chr3                  -    15738618  15738692     75
+r5       75     1    75    75   100.0%  chr14                 -    49586683  49586757     75
+r5       75     1    75    75   100.0%  chr14                 +    49862672  49862746     75
+```
+
+Looks like they are all mapped to similar regions in chr9,3,14, which are probalbly low-complexity sequences. Also, the GC% of these repeated reads are:
+
+```python
+# in python
+>>> def GC(str):
+...   return (str.count('G') + str.count('C')) / len(str)
+... 
+>>> GC('CCTTAGGCAACCTGGTGGTCCCCCGCTCCCGGGAGGTCACCATATTGATGCCGAACTTAGTGCGGACACCCGATC')
+0.6133333333333333
+>>> GC('CCCCTCCTTAGGCAACCTGGTGGTCCCCCGCTCCCGGGAGGTCACCATATTGATGCCGAACTTAGTGCGGACACC')
+0.6266666666666667
+>>> GC('CCCTCCTTAGGCAACCTGGTGGTCCCCCGCTCCCGGGAGGTCACCATATTGATGCCGAACTTAGTGCGGACACCC')
+0.6266666666666667
+>>> GC('CTCCGTTTCCGACCTGGGCCGGTTCACCCCTCCTTAGGCAACCTGGTGGTCCCCCGCTCCCGGGAGGTCACCATA')
+0.6666666666666666
+>>> GC('CCTCCTTAGGCAACCTGGTGGTCCCCCGCTCCCGGGAGGTCACCATATTGATGCCGAACTTAGTGCGGACACCCG')
+0.6266666666666667
+```
+Quite matched with the value of the peak... I think it's OK to not to remove them in downstream analyses.
+
+
+### Aligning using HISAT2
+I'd like to try another splice-aware aligner HISAT2. Also, Salmon/Kallisto are pretty good choices.
+
+
+#### 1. Download files
+```bash
+cd /athena/angsd/scratch/zhp4001/refGenome
+# reference genome
+wget ftp://ftp.ensembl.org/pub/release-84/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
+gunzip Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz
+mv Homo_sapiens.GRCh38.dna.primary_assembly.fa genome.fa
+
+# Download GTF and make exon, splicesite file
+wget ftp://ftp.ensembl.org/pub/release-84/gtf/homo_sapiens/Homo_sapiens.GRCh38.84.gtf.gz  
+gunzip Homo_sapiens.GRCh38.84.gtf.gz
+mv Homo_sapiens.GRCh38.84.gtf genome.gtf
+~/tools/hisat2-2.2.1/hisat2_extract_splice_sites.py genome.gtf > genome.ss
+~/tools/hisat2-2.2.1/hisat2_extract_exons.py genome.gtf > genome.exon
+
+# Download SNP
+wget http://hgdownload.cse.ucsc.edu/goldenPath/hg38/database/snp144Common.txt.gz
+gunzip snp144Common.txt.gz
+# Convert chromosome names of UCSC Database to Ensembl Annotation
+awk 'BEGIN{OFS="\t"} {if($2 ~ /^chr/) {$2 = substr($2, 4)}; if($2 == "M") {$2 = "MT"} print}' snp144Common.txt > snp144Common.txt.ensembl
+
+# make SNPs and haplotype file
+~/tools/hisat2-2.2.1/hisat2_extract_snps_haplotypes_UCSC.py genome.fa snp144Common.txt.ensembl genome
+
+# this HGFM index takes too long, maybe show next time
+<!-- ~/tools/hisat2-2.2.1/hisat2-build -p 16 --snp genome.snp --haplotype genome.haplotype --exon genome.exon --ss genome.ss genome.fa genome_snp_tran -->
+
+# Build HFM index
+hisat2-build -p 16 genome.fa genome
+```
+
+#### 2. Align reads
+```bash
+cd /athena/angsd/scratch/zhp4001/data
+mkdir alignments
+
+for s in $(ls *.fastq.gz| sed 's/_.*.gz//g' | sort -u); do
+echo Aligning $s...
+hisat2 -q -x ../refGenome/genomeIdx/genome -1 ${s}_1.fastq.gz -2 ${s}_2.fastq.gz -S alignments/$s.sam
+# convert sam to bam
+samtools view -bS alignments/$s.sam | samtools sort > alignments/$s.sorted.bam
+rm alignments/$s.sam
+done
+```
+
+Paramters: 
+
+- `-q`: inputing fastq files
+- `-x`: the basename of the index for the reference genome, it's 'genome' here
+- `-1`: paired-end seq file 1
+- `-2`: paired-end seq file 2
+- `-S`: file to write SAM alignments to, maybe S for 'SAM'
+
+```
+Aligning SRR12953537...
+50817747 reads; of these:
+  50817747 (100.00%) were paired; of these:
+    6182910 (12.17%) aligned concordantly 0 times
+    42503692 (83.64%) aligned concordantly exactly 1 time
+    2131145 (4.19%) aligned concordantly >1 times
+    ----
+    6182910 pairs aligned concordantly 0 times; of these:
+      639055 (10.34%) aligned discordantly 1 time
+    ----
+    5543855 pairs aligned 0 times concordantly or discordantly; of these:
+      11087710 mates make up the pairs; of these:
+        5863044 (52.88%) aligned 0 times
+        4518721 (40.75%) aligned exactly 1 time
+        705945 (6.37%) aligned >1 times
+94.23% overall alignment rate
+```
+
+I think the 94.23% alignment rate is good to go.
+
+#### 3. BAMQC
+
+```bash
+cd alignments
+/softlib/apps/EL7/BamQC/bin/bamqc -t 5 SRR12953537.sorted.bam
+```
+The report looks good, but has a red cross in the `Insert Length Distribution` session. Insert length means the size of the insertion between two read adapters. 
+
+![insertLen](/athena/angsd/scratch/zhp4001/data/fastqc/insertLen.png)
+
+The little column in 94000-95990 might be the problem? I guess it's also related to those repeated reads across chromosomes... However, there are not many of them so the QC is also good.
+
+Also, seems like HISAT2 can detect both SNPs and splicings:
+
+- `Percent sequences spliced`: 11.610
+- `Percent SNPs`: 0.416
+- `Percent indels`: 0.010 (Ins: 0.005; Del: 0.005)
+
+Overall, HISAT2 is fast for building index (the basic one), but slow for aligning that takes about 2 hours for one sample.
+
+
