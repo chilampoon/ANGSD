@@ -12,7 +12,7 @@
 source ~/.bashrc
 
 cd /athena/angsd/scratch/zhp4001/data
-for s in SRR12953537; do
+for s in $(ls *.fastq.gz | sed 's/_.*$//g' | uniq); do
 echo Aligning $s...
 hisat2 -q -x ../refGenome/genomeIdx/genome -1 ${s}_1.fastq.gz -2 ${s}_2.fastq.gz -S alignments/$s.sam
 # convert sam to bam
