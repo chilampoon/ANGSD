@@ -26,7 +26,7 @@ Selected samples: see this [table](data/SraRunTable.txt)
 
 - Alignment: HISAT2
 - QC: FastQC, BamQC
-- Quantification: Salmon (alignment mode)
-- Differential expression analysis: 
+- Quantification: featureCounts
+- Differential expression analysis: DESeq2
 
 
