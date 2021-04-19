@@ -142,6 +142,14 @@ ggplot(chr.df, aes(x=chr,y=count,fill=chr)) +
 
 The majority is still autosomal genes, but those highly differentiated are genes on sexual chromosomes.
 
+#### Pathway analysis
+I threw the DEGs into gProfiler to see if any pathway significantly enriched. Since only 12 DEGs in the negative direction, I put up/downregulated genes together to the gProfiler server. Then got this plot:
+
+![](/athena/angsd/scratch/zhp4001/ANGSD-project/img/gprofiler.png)
+
+No pahtway is significant... Pre-ranked GSEA with t-statistics could be better to find differential pathways.
+
+
 ## Methods
 ### Overview
 
@@ -295,12 +303,6 @@ ggplot(summ, aes(x=sample, y=count, fill=Status)) +
   theme(legend.position = "bottom")
 ```
 
-#### Pathway analysis
-I threw the DEGs into gProfiler to see if any pathway significantly enriched. Since only 12 DEGs in the negative direction, I put up/downregulated genes together to the gProfiler server. Then got this plot:
-
-![](/athena/angsd/scratch/zhp4001/ANGSD-project/img/gprofiler.png)
-
-No pahtway is significant... Pre-ranked GSEA with t-statistics could be better to find differential pathways.
 
 ### Differential expression analysis
 
