@@ -1,0 +1,153 @@
+---
+title: "Analysis"
+author: "Chi Lam Poon"
+date: "4/18/2021"
+output: html_document
+---
+
+### Loading data
+
+The DESeq2 object was already created previously.
+
+```{r load}
+suppressPackageStartupMessages({
+  library(DESeq2)
+  library(dplyr)
+  library(ggplot2)
+  library(edgeR)
+  library(ggbeeswarm)
+  library(ggpubr)
+})
+suppressMessages(dds <- readRDS("/athena/angsd/scratch/zhp4001/ANGSD-project/data/deseq.obj.rds"))
+```
+
+### DESeq!
+
+```{r design1}
+dds@design
+dds <- DESeq(dds)
+anno <- metadata(dds)[["annotation"]]
+# try to get DEGs for TOD
+res.tod <- results(dds)
+res.tod
+# take a look
+resOrdered.tod <- res.tod[order(res.tod$padj),] %>% data.frame()
+resOrdered.tod$geneName <- anno[match(rownames(resOrdered.tod), anno$id),]$symbol
+head(resOrdered.tod)
+DESeq2::plotMA(res.tod, ylim=c(-2,2))
+```
+
+```{r design2}
+# try to get DEGs for sex
+res.sex <- results(dds, contrast = c("gender","male","female"))
+res.sex
+resOrdered.sex <- res.sex[order(res.sex$padj),] %>% data.frame()
+resOrdered.sex$geneName <- anno[match(rownames(resOrdered.sex), anno$id),]$symbol
+head(resOrdered.sex)
+
+DESeq2::plotMA(res.sex, ylim=c(-5,5))
+```
+
+Now I try to use data with no Y genes because :
+
+```{r noY}
+dds2 <- readRDS("/athena/angsd/scratch/zhp4001/ANGSD-project/data/deseq.obj.noXY.rds")
+dds2@design
+dds2 <- DESeq(dds2)
+
+# try to get DEGs for TOD
+res.tod2 <- results(dds2)
+res.tod2
+# take a look
+resOrdered.tod2 <- res.tod2[order(res.tod2$padj),] %>% data.frame()
+resOrdered.tod2$geneName <- anno[match(rownames(resOrdered.tod2), anno$id),]$symbol
+head(resOrdered.tod2)
+
+# try to get DEGs for sex
+res.sex2 <- results(dds2, contrast = c("gender","male","female"))
+res.sex2
+resOrdered.sex2 <- res.sex2[order(res.sex2$padj),] %>% data.frame()
+resOrdered.sex2$geneName <- anno[match(rownames(resOrdered.sex2), anno$id),]$symbol
+head(resOrdered.sex2)
+
+DESeq2::plotMA(res.sex2, ylim=c(-5,5))
+```
+
+Decided to continue the analysis using data with XY genes included...
+
+```{r shrinkage}
+library(apeglm)
+resultsNames(dds)
+resLFC <- lfcShrink(dds, coef="gender_male_vs_female", type="apeglm")
+resLFC
+DESeq2::plotMA(resLFC, ylim=c(-5,5))
+```
+
+#### Volcano plot
+```{r vol}
+resOrdered.sex$color <- ifelse(abs(resOrdered.sex$log2FoldChange)>=log2(2) & resOrdered.sex$padj <= 0.05, "steelblue", "lightgrey")
+
+ggplot(resOrdered.sex, aes(x=log2FoldChange, y=-log10(padj), color=color)) +
+  geom_point(size=1.5) + theme_bw() + scale_color_identity() + 
+  geom_vline(xintercept=c(-log2(2), log2(2)), alpha=0.6, linetype="dotted") +
+  geom_hline(yintercept=-log10(0.05), alpha=0.8, color="steelblue", linetype="dotted") +
+  ggtitle("Male vs Female") +
+  annotate("text", x=-10, y=230, label="XIST", fontface = 'italic') +
+  annotate("text", x=12, y=110, label="DDX3Y", fontface = 'italic') +
+  annotate("text", x=16, y=80, label="USP9Y", fontface = 'italic') +
+  annotate("text", x=-3, y=40, label="TSIX", fontface = 'italic')
+```
+
+## Pathway analysis
+I just threw the significant DEGs (log2FC >= |log2(1.5)| & adjusted.Pval <= 0.05) into gProfiler.
+```{r path}
+pos.ids <- rownames(resOrdered.sex[resOrdered.sex$color=="steelblue" & resOrdered.sex$log2FoldChange>0, ])
+pos.ids <- gsub(".[.*$]", "", pos.ids)
+neg.ids <- rownames(resOrdered.sex[resOrdered.sex$color=="steelblue" & resOrdered.sex$log2FoldChange<0, ])
+neg.ids <- gsub(".[.*$]", "", neg.ids)
+write.table(pos.ids, "/athena/angsd/scratch/zhp4001/ANGSD-project/data/sig.pos.id.txt", quote = F, row.names = F, col.names = F)
+write.table(neg.ids, "/athena/angsd/scratch/zhp4001/ANGSD-project/data/sig.neg.id.txt", quote = F, row.names = F, col.names = F)
+
+```
+
+## Swarm plots
+
+```{r splot}
+cpms <- cpm(assay(dds))
+log.cpms <- log2(cpms) + 1
+
+plotting <- function(mat, gene, name) {
+  meta <- colData(dds) %>% data.frame()
+  gene.cpm <- log.cpms[rownames(log.cpms)==gene,]
+  gene.cpm[gene.cpm==-Inf] <- 0
+  df <- data.frame(obj=names(gene.cpm), cpm=gene.cpm, gender=meta$gender)
+  
+  ggplot(df, aes(gender, cpm, color=gender)) + geom_quasirandom() + theme_bw() +
+    ggtitle(name) + ylab("log2(cpm)")
+}
+
+p1 <- plotting(log.cpms, "ENSG00000229807.12", "XIST")
+p2 <- plotting(log.cpms, "ENSG00000270641.1", "TSIX")
+p3 <- plotting(log.cpms, "ENSG00000067048.17", "DDX3Y")
+p4 <- plotting(log.cpms, "ENSG00000114374.13", "USP9Y")
+ggarrange(p1,p2,p3,p4,ncol=2, nrow=2,legend = "right", common.legend = T)
+```
+
+## Biotypes
+
+```{r biotype}
+resOrdered.sex$biotype <- anno[match(rownames(resOrdered.sex), anno$id),]$biotype
+types <- resOrdered.sex[resOrdered.sex$color=="steelblue",]$biotype
+table(types)
+```
+
+## Chromosomes for genes
+```{r chrom}
+resOrdered.sex$chrom <- anno[match(rownames(resOrdered.sex), anno$id),]$chrom
+chroms <- resOrdered.sex[resOrdered.sex$color=="steelblue",]$chrom
+tmp <- table(chroms)
+sum(tmp[!names(tmp) %in% c("chrX","chrY")])
+chr.df <- data.frame(chr=c("Autosomal", "X", "Y"), count=c(1648,41,27))
+ggplot(chr.df, aes(x=chr,y=count,fill=chr)) +
+  geom_bar(position="stack", stat="identity") + theme_bw()
+```

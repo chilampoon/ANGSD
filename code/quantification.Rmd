@@ -1,7 +1,7 @@
 ---
-title: "Quantification"
+title: "Quantification - updated"
 author: "Chi Lam Poon"
-date: "3/21/2021"
+date: "4/18/2021"
 output: html_document
 ---
 
@@ -17,15 +17,17 @@ SRR12953548.sorted.bam  SRR12953556.sorted.bam  SRR12953575.sorted.bam  SRR12953
 
 # gene level
 files=$(ls *.bam)
-featureCounts -T 62 -t exon -g gene_id -a ../../refGenome/hg38.ensGene.gtf.gz -o all.counts.txt $files
+featureCounts -T 62 -t exon -g gene_id -a ../../refGenome/gencode.v37.annotation.gtf.gz -o all.counts.2.txt $files
 ```
+
+Updated: The library prep used the TruSeq Stranded kit, which means the reads are stranded. The default behaviour for `-s` flag is 0, i.e. count on both strand, and using `-s 0` should be fine. If sets to `-s 1`, the alignment rates will be much lower. 
 
 ### Looking into quantification situations
 ```{r quant}
 library(tidyr)
 library(ggplot2)
 
-summ <- read.delim("/athena/angsd/scratch/zhp4001/data/alignments/all.counts.txt.summary")
+summ <- read.delim("/athena/angsd/scratch/zhp4001/data/alignments/all.counts.2.txt.summary")
 colnames(summ) <- gsub(".sorted.bam", "", colnames(summ))
 summ <- summ[sapply(summ$Status, function(x) sum(summ[summ$Status==x,-1]) !=0), ]
 summ <- summ %>% gather(sample, count, -Status)
@@ -35,7 +37,10 @@ ggplot(summ, aes(x=sample, y=count, fill=Status)) +
   coord_flip() + 
   theme(legend.position = "bottom")
 ```
+
 Why there are so many `Unassigned_NoFeatures`...? The overall alignment rates of HISAT2 were all ~94,95%, fastqc & bamqc reports also look good (one samples' were shown in a previous homework and the others not shown here).
+
+Updated: I've tried `hg38.ensGene.gtf.gz`, `gencode.v37.annotation.gtf.gz`, `gencode.v37.chr_patch_hapl_scaff.annotation.gtf.gz`. The `Unassigned_NoFeature` are quite high in all cases. WHY???
 
 Maybe there are too many reads falled on intronic regions and other non-coding regions..?
 I tried to view the reads on IGV using one sample and they looked fine...
@@ -45,7 +50,7 @@ I tried to view the reads on IGV using one sample and they looked fine...
 Load the read counts:
 
 ```{r reads}
-cnts <- read.delim("/athena/angsd/scratch/zhp4001/data/alignments/all.counts.txt", comment.char = "#")
+cnts <- read.delim("/athena/angsd/scratch/zhp4001/data/alignments/all.counts.2.txt", comment.char = "#")
 rownames(cnts) <- cnts[,1]
 cnts <- cnts[,-c(1:6)]
 colnames(cnts) <- gsub(".sorted.bam", "", colnames(cnts))
@@ -102,7 +107,7 @@ suppressPackageStartupMessages({
 })
 
 # make information file
-samples.info <- read.delim("/athena/angsd/scratch/zhp4001/ANGSD-project/data/SraRunTable.txt", sep = ",")
+samples.info <- read.csv("/athena/angsd/scratch/zhp4001/ANGSD-project/data/SraRunTable.csv", sep = ",")
 samples.info <- samples.info[, c("Run", "AGE", "gender", "pmi", "Race", "Tissue")]
 # manually add one more variable
 samples.info$TOD <- c(1.688509416, 11.7744848, 17.09167991, 8.419554181, -1.167548126, -5.330048689, 
@@ -113,12 +118,40 @@ samples.info
 # generate deseq object
 DESeq.ds <- DESeqDataSetFromMatrix(countData = cnts , colData = samples.info, design = ~ AGE + gender + pmi + TOD)
 ```
+Note: PMI is postmortem interval. TOD is time of death.
 
-Note: PMI is postmortem interval.
+### Adding annotation file
+```{r anno}
+# add annotation
+anno <- read.delim("/athena/angsd/scratch/zhp4001/refGenome/annotation.txt", header = F, 
+                   col.names = c("id", "chrom", "start","end","symbol","biotype"))
+```
+
 
 ```{r de-2, fig.width=8}
-# remove genes without any counts
-DESeq.ds <- DESeq.ds[ rowSums(counts(DESeq.ds)) > 0, ]
+# GENE FILTERS
+dim(DESeq.ds)
+## removes genes without any counts
+DESeq.ds <- DESeq.ds[rowSums(counts(DESeq.ds)) > 0, ]
+
+# removes Y genes
+# anno <- anno[!anno$chrom %in% c("chrY"),] 
+# DESeq.ds <- DESeq.ds[rownames(DESeq.ds) %in% anno$id, ]
+
+## discards genes expressed in fewer than half of the subjects
+library(edgeR)
+minSamples <- floor(ncol(DESeq.ds) / 2)
+cpms <- cpm(assay(DESeq.ds))
+keep <- rowSums(cpms > 2) >= minSamples
+sum(keep) #how many genes left
+DESeq.ds <- DESeq.ds[keep,]
+dim(DESeq.ds)
+
+## add annotation file
+anno <- anno[match(rownames(DESeq.ds), anno$id),]
+all(as.character(anno$id) == as.character(rownames(DESeq.ds)))
+metadata(DESeq.ds)[["annotation"]] <- anno
+
 # different library sizes
 colSums(counts(DESeq.ds))
 
@@ -141,6 +174,11 @@ as.dist(1-corr_coeff, upper = TRUE) %>% as.matrix %>% pheatmap(., main = "Pearso
                                                                labels_col = colData(DESeq.ds)$gender)
 ```
 Seems hard to differentiate female & male samples for now, I think PCA will get an ambiguous result like this. Let's see if any DE genes in the next step.
+
+```{r pca}
+vsd <- vst(DESeq.ds, blind=FALSE)
+plotPCA(vsd, intgroup=c("gender"))
+```
 
 ### Saving
 ```{r save}
