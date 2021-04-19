@@ -134,8 +134,9 @@ table(types)
 resOrdered.sex$chrom <- anno[match(rownames(resOrdered.sex), anno$id),]$chrom
 chroms <- resOrdered.sex[resOrdered.sex$color=="steelblue",]$chrom
 tmp <- table(chroms)
-sum(tmp[!names(tmp) %in% c("chrX","chrY")])
-chr.df <- data.frame(chr=c("Autosomal", "X", "Y"), count=c(1648,41,27))
+autos <- sum(tmp[!names(tmp) %in% c("chrX","chrY")])
+autos
+chr.df <- data.frame(chr=c("Autosomal", "X", "Y"), count=c(autos,tmp[names(tmp)=="chrX"],tmp[names(tmp)=="chrY"]))
 ggplot(chr.df, aes(x=chr,y=count,fill=chr)) +
   geom_bar(position="stack", stat="identity") + theme_bw()
 ```
@@ -506,7 +507,7 @@ I tried to view the reads on IGV using one sample and they looked fine...
 
 ![](/athena/angsd/scratch/zhp4001/data/fastqc/IGV.png)
 
-But the RSeQC result indeed shows many reads on intron:
+But the RSeQC result indeed shows many reads on intron, one example here:
 
 ```
 Total Reads                   90985118
@@ -534,6 +535,8 @@ A hypothesis to explain the prevalence is that they harbour functional non-codin
 Another paper ([Ameur et al, 2011](https://www.nature.com/articles/nsmb.2143)) shows that part of the intronic alignments reflect nascent transcription and co-transcriptional splicing. 
 
 ### About the results
+
+The two hypotheses are more or less correct - 1) no DEG for the TOD DE; 2) many DEGs for the sex DE.
 
 It's more interesting to identify (differentially) cycling genes using curve fitting or so with this kind of datasets, as well as to perform pathway analysis using those genes. See the following plot:
 
